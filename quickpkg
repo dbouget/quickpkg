@@ -7,156 +7,14 @@ import subprocess
 import tempfile
 import shutil
 import stat
-
-# includes FoundationPlist since some apps store their Info.plist
-# as binary PropertyLists
-
-# FoundationPlist:
-
-# Copyright 2009-2014 Greg Neagle.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-"""FoundationPlist.py -- a tool to generate and parse MacOSX .plist files.
-
-This is intended as a drop-in replacement for Python's included plistlib,
-with a few caveats:
-    - readPlist() and writePlist() operate only on a filepath,
-        not a file object.
-    - there is no support for the deprecated functions:
-        readPlistFromResource()
-        writePlistToResource()
-    - there is no support for the deprecated Plist class.
-
-The Property List (.plist) file format is a simple XML pickle supporting
-basic object types, like dictionaries, lists, numbers and strings.
-Usually the top level object is a dictionary.
-
-To write out a plist file, use the writePlist(rootObject, filepath)
-function. 'rootObject' is the top level object, 'filepath' is a
-filename.
-
-To parse a plist from a file, use the readPlist(filepath) function,
-with a file name. It returns the top level object (again, usually a
-dictionary).
-
-To work with plist data in strings, you can use readPlistFromString()
-and writePlistToString().
-"""
-
-from Foundation import NSData, \
-                       NSPropertyListSerialization, \
-                       NSPropertyListMutableContainersAndLeaves, \
-                       NSPropertyListXMLFormat_v1_0
-
-
-class FoundationPlistException(Exception):
-    '''Base error for this module'''
-    pass
-
-
-class NSPropertyListSerializationException(FoundationPlistException):
-    '''Read error for this module'''
-    pass
-
-
-class NSPropertyListWriteException(FoundationPlistException):
-    '''Write error for this module'''
-    pass
-
-
-# private functions
-def _dataToPlist(data):
-    '''low-level function that parses a data object into a propertyList object'''
-    darwin_vers = int(os.uname()[2].split('.')[0])
-    if darwin_vers > 10:
-        (plistObject, plistFormat, error) = (
-            NSPropertyListSerialization.propertyListWithData_options_format_error_(
-                data, NSPropertyListMutableContainersAndLeaves, None, None))
-    else:
-        # 10.5 doesn't support propertyListWithData:options:format:error:
-        # 10.6's PyObjC wrapper for propertyListWithData:options:format:error:
-        #        is broken
-        # so use the older NSPropertyListSerialization function
-        (plistObject, plistFormat, error) = (
-            NSPropertyListSerialization.propertyListFromData_mutabilityOption_format_errorDescription_(
-                         data, NSPropertyListMutableContainersAndLeaves, None, None))
-    if plistObject is None:
-        if error is None:
-            error = "Plist data is invalid and could not be deserialized."
-        raise NSPropertyListSerializationException(error)
-    else:
-        return plistObject
-
-
-def _plistToData(plistObject):
-    '''low-level function that creates NSData from a plist object'''
-    darwin_vers = int(os.uname()[2].split('.')[0])
-    if darwin_vers > 10:
-        (data, error) = (
-            NSPropertyListSerialization.dataWithPropertyList_format_options_error_(
-                plistObject, NSPropertyListXMLFormat_v1_0, 0, None))
-    else:
-        # use the older NSPropertyListSerialization function on 10.6 and 10.5
-        (data, error) = (
-            NSPropertyListSerialization.dataFromPropertyList_format_errorDescription_(
-                plistObject, NSPropertyListXMLFormat_v1_0, None))
-    if data is None:
-        if error is None:
-            error = "Property list invalid for format."
-        raise NSPropertyListSerializationException(error)
-    return data
-
-
-# public functions
-def readPlist(filepath):
-    '''Read a .plist file from filepath.  Return the unpacked root object
-    (which is usually a dictionary).'''
-    try:
-        data = NSData.dataWithContentsOfFile_(filepath)
-    except NSPropertyListSerializationException, error:
-        # insert filepath info into error message
-        errmsg = (u'%s in %s' % (error, filepath))
-        raise NSPropertyListSerializationException(errmsg)
-    return _dataToPlist(data)
-
-
-def readPlistFromString(aString):
-    '''Read a plist data from a string. Return the root object.'''
-    data = buffer(aString)
-    return _dataToPlist(data)
-
-
-def writePlist(plistObject, filepath):
-    '''Write 'plistObject' as a plist to filepath.'''
-    plistData = _plistToData(plistObject)
-    if plistData.writeToFile_atomically_(filepath, True):
-        return
-    else:
-        raise NSPropertyListWriteException(
-            u"Failed to write plist data to %s" % filepath)
-
-
-def writePlistToString(plistObject):
-    '''Create a plist-formatted string from plistObject.'''
-    return str(_plistToData(plistObject))
-
+import plistlib
 
 # 
 # quickpkg
 # 
 
 
-quickpkg_version = '0.9'
+quickpkg_version = '1.0beta'
 supported_extensions = ['dmg', 'app', 'zip', 'xip']
 
 
@@ -165,7 +23,7 @@ supported_extensions = ['dmg', 'app', 'zip', 'xip']
 
 def logger(log, v=0):
     if args.verbosity >= v:
-        print log
+        print(log)
 
 
 def cmdexec(command, stdin=''):
@@ -189,8 +47,8 @@ def getFirstPlist(textString):
     more text-style plists.
     Returns a tuple - the first plist (if any) and the remaining
     string after the plist"""
-    plist_header = '<?xml version'
-    plist_footer = '</plist>'
+    plist_header = b"<?xml version"
+    plist_footer = b"</plist>"
     plist_start_index = textString.find(plist_header)
     if plist_start_index == -1:
         # not found
@@ -211,10 +69,10 @@ def dmg_has_sla(dmgpath):
     imageinfo_cmd = ['/usr/bin/hdiutil', 'imageinfo', dmgpath, '-plist']
     result = cmdexec(imageinfo_cmd)
     if result["return_code"] != 0:
-        print "error getting imageinfo! %s, %s" % (result["return_code"], result["stderr"])
+        print("error getting imageinfo! %s, %s" % (result["return_code"], result["stderr"]))
         return False
     result_plist = result["stdout"]
-    imageinfo_dict = readPlistFromString(result_plist)
+    imageinfo_dict = plistlib.loads(result_plist)
     properties = imageinfo_dict.get('Properties')
     if properties is not None:
         has_sla = properties.get('Software License Agreement', False)
@@ -228,20 +86,20 @@ def attachdmg(dmgpath):
     if info_result["return_code"] == 0:
         # parse the plist output
         (theplist, alltext) = getFirstPlist(info_result["stdout"])
-        info_dict = readPlistFromString(theplist)
+        info_dict = plistlib.loads(theplist)
         volpaths = []
-        if "images" in info_dict.keys():
+        if "images" in list(info_dict.keys()):
             for y in info_dict["images"]:
-                if "image-path" in y.keys():
+                if "image-path" in list(y.keys()):
                     if y["image-path"] == dmgpath and os.path.samefile(y["image-path"], dmgpath):
                         for x in y.get("system-entities"):
-                            if "mount-point" in x.keys():
+                            if "mount-point" in list(x.keys()):
                                 volpaths.append(x["mount-point"])
                                 dmg_was_mounted = True
                         return volpaths
     else:
-        print "error getting hdiutil info"
-        print "(%d, %s)" % (info_result["returncode"], info_result["stderr"])
+        print("error getting hdiutil info")
+        print("(%d, %s)" % (info_result["returncode"], info_result["stderr"]))
         cleanup_and_exit(1)
 
     attachcmd = ["/usr/bin/hdiutil",
@@ -253,14 +111,14 @@ def attachdmg(dmgpath):
                  "-nobrowse"]
     if dmg_has_sla(dmgpath):
         stdin = "Y\n"
-        print "NOTE: Disk image %s has a license agreement!" % dmgpath
+        print("NOTE: Disk image %s has a license agreement!" % dmgpath)
     else:
         stdin = ''
     result = cmdexec(attachcmd, stdin)
     if result["return_code"] == 0:
         # parse the plist output
         (theplist, alltext) = getFirstPlist(result["stdout"])
-        resultdict = readPlistFromString(theplist)
+        resultdict = plistlib.loads(theplist)
         volpaths = []
         for x in resultdict["system-entities"]:
             if x["potentially-mountable"]:
@@ -269,8 +127,8 @@ def attachdmg(dmgpath):
         # return the paths to mounted volume
         return volpaths
     else:
-        print "error mounting disk image"
-        print "(%d, %s)" % (result["returncode"], result["stderr"])
+        print("error mounting disk image")
+        print("(%d, %s)" % (result["returncode"], result["stderr"]))
         cleanup_and_exit(1)
 
 
@@ -287,11 +145,11 @@ def finditemswithextension(dirpath, item_extension):
     if os.path.exists(dirpath):
         for x in os.listdir(dirpath):
             (item_basename, item_extension) = os.path.splitext(x)
-            item_extension = string.lstrip(item_extension, '.')
+            item_extension = item_extension.lstrip('.')
             if item_extension == 'app':
                 foundapps.append(os.path.join(dirpath, x))
     else:
-        print "path %s does not exist" % dirpath
+        print("path %s does not exist" % dirpath)
         cleanup_and_exit(1)
     return foundapps
 
@@ -299,10 +157,11 @@ def finditemswithextension(dirpath, item_extension):
 def appNameAndVersion(app_path):
     info_path = os.path.join(app_path, "Contents/Info.plist")
     if not os.path.exists(info_path):
-        print "Application at path %s does not have Info.plist" % app_path
+        print("Application at path %s does not have Info.plist" % app_path)
         # TODO: cleanup volumes here
         cleanup_and_exit(1)
-    info_plist = readPlist(info_path)
+    with open(info_path, 'rb') as info_file:
+        info_plist = plistlib.load(info_file)
     app_name = info_plist.get("CFBundleName")
     if app_name is None:
         app_name = info_plist.get("CFBundleDisplayName")
@@ -310,7 +169,7 @@ def appNameAndVersion(app_path):
             (app_name, app_ext) = os.path.splitext(os.path.basename(app_path))
     app_identifier = info_plist.get("CFBundleIdentifier")
     app_version = info_plist.get("CFBundleShortVersionString")
-    if app_version is None:
+    if app_version is None or app_version == "":
         app_version = info_plist.get("CFBundleVersion")
     return (app_name, app_identifier, app_version)
 
@@ -379,7 +238,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # remove trailing '/' from path
-    item_path = string.rstrip(args.item_path, '/')
+    item_path = args.item_path.rstrip('/')
 
     if item_path.startswith('~'):
         item_path = os.path.expanduser(item_path)
@@ -387,11 +246,11 @@ if __name__ == "__main__":
 
     # get file extension
     (item_basename, item_extension) = os.path.splitext(item_path)
-    item_extension = string.lstrip(item_extension, '.')
+    item_extension = item_extension.lstrip('.')
 
     # is extension supported
     if item_extension not in supported_extensions:
-        print ".%s is not a supported extension!" % item_extension
+        print(".%s is not a supported extension!" % item_extension)
         exit(1)
 
     foundapps = []
@@ -400,7 +259,7 @@ if __name__ == "__main__":
     # if item is an app, just pass it on
     if item_extension == 'app':
         if not os.path.exists(item_path):
-            print "This does not seem to be an Application!"
+            print("This does not seem to be an Application!")
             exit(1)
         foundapps.append(item_path)
         copy_app = True
@@ -421,11 +280,11 @@ if __name__ == "__main__":
             moreapps = finditemswithextension(x, 'app')
             foundapps.extend(moreapps)
         if len(foundapps) == 0:
-            print "Could not find an application!"
+            print("Could not find an application!")
             cleanup_and_exit(1)
         elif len(foundapps) > 1:
-            print "Found too many Applications! Can't decide!"
-            print foundapps
+            print("Found too many Applications! Can't decide!")
+            print(foundapps)
             cleanup_and_exit(1)
         
     # if item is zip, unzip to tmp location and find useful contents
@@ -434,16 +293,16 @@ if __name__ == "__main__":
         unzip_cmd = ["/usr/bin/unzip", "-d", unarchive_path, item_path]
         result = cmdexec(unzip_cmd)
         if result["return_code"] != 0:
-            print "An error occured while unzipping:"
-            print "%d, %s" % (result["return_code"], result["stderr"])
+            print("An error occured while unzipping:")
+            print("%d, %s" % (result["return_code"], result["stderr"]))
             cleanup_and_exit(1)
         foundapps = finditemswithextension(unarchive_path, 'app')
         if len(foundapps) == 0:
-            print "Could not find an application!"
+            print("Could not find an application!")
             cleanup_and_exit(1)
         elif len(foundapps) > 1:
-            print "Found too many Applications! Can't decide!"
-            print foundapps
+            print("Found too many Applications! Can't decide!")
+            print(foundapps)
             cleanup_and_exit(1)
 
     # if item is xip, extract to tmp location and find useful contents
@@ -456,16 +315,16 @@ if __name__ == "__main__":
         result = cmdexec(xip_cmd)
         os.chdir(cwd)
         if result["return_code"] != 0:
-            print "An error occured while expanding xip archive:"
-            print "%d, %s" % (result["return_code"], result["stderr"])
+            print("An error occured while expanding xip archive:")
+            print("%d, %s" % (result["return_code"], result["stderr"]))
             cleanup_and_exit(1)
         foundapps = finditemswithextension(unarchive_path, 'app')
         if len(foundapps) == 0:
-            print "Could not find an application!"
+            print("Could not find an application!")
             cleanup_and_exit(1)
         elif len(foundapps) > 1:
-            print "Found too many Applications! Can't decide!"
-            print foundapps
+            print("Found too many Applications! Can't decide!")
+            print(foundapps)
             cleanup_and_exit(1)
 
     logger("Found application: %s" % foundapps[0], 1)
@@ -497,18 +356,20 @@ if __name__ == "__main__":
 
     logger(result["stdout"], 1)
     if result["return_code"] != 0:
-        print "Error Code: %d " % result["return_code"]
-        print result["stderr"]
+        print("Error Code: %d " % result["return_code"])
+        print(result["stderr"])
         cleanup_and_exit(1)
     
     if not args.relocatable:
         # read and change component plist
-        components = readPlist(component_plist)
+        with open(component_plist, 'rb') as component_file:
+            components = plistlib.load(component_file)
         # component plist is an array of components
         for bundle in components:
-            if "BundleIsRelocatable" in bundle.keys():
+            if "BundleIsRelocatable" in list(bundle.keys()):
                 bundle["BundleIsRelocatable"] = False
-        writePlist(components, component_plist)
+        with open(component_plist, 'wb') as component_file:
+            plistlib.dump(components, component_file, fmt=plistlib.FMT_XML)
     
     pkg_name = "{name}-{version}.pkg"
     if args.output:
@@ -534,7 +395,7 @@ if __name__ == "__main__":
               pkg_path]
 
     if args.scripts and not os.path.exists(args.scripts):
-        print "scripts folder %s does not exist!" % args.scripts
+        print("scripts folder %s does not exist!" % args.scripts)
         cleanup_and_exit(1)
 
     if args.postinstall or args.preinstall:
@@ -547,11 +408,11 @@ if __name__ == "__main__":
             shutil.copytree(args.scripts, tmp_scripts_path)
         if args.postinstall:
             if not os.path.exists(args.postinstall):
-                print "postinstall file %s does not exist!" % args.postinstall
+                print("postinstall file %s does not exist!" % args.postinstall)
                 cleanup_and_exit(1)
             postinstall_path = os.path.join(tmp_scripts_path, "postinstall")
             if os.path.exists(postinstall_path):
-                print "postinstall script already exists in %s" % args.scripts
+                print("postinstall script already exists in %s" % args.scripts)
                 cleanup_and_exit(1)
             logger("copying %s to %s" % (args.postinstall, postinstall_path), 1)
             shutil.copy2(args.postinstall, postinstall_path)
@@ -560,11 +421,11 @@ if __name__ == "__main__":
                                        stat.S_IROTH | stat.S_IXOTH)
         if args.preinstall:
             if not os.path.exists(args.preinstall):
-                print "preinstall file %s does not exist!" % args.preinstall
+                print("preinstall file %s does not exist!" % args.preinstall)
                 cleanup_and_exit(1)
             preinstall_path = os.path.join(tmp_scripts_path, "preinstall")
             if os.path.exists(preinstall_path):
-                print "preinstall script already exists in %s" % args.scripts
+                print("preinstall script already exists in %s" % args.scripts)
                 cleanup_and_exit(1)
             logger("copying %s to %s" % (args.preinstall, preinstall_path), 1)
             shutil.copy2(args.preinstall, preinstall_path)
@@ -588,14 +449,14 @@ if __name__ == "__main__":
         pkgcmd.extend(["--keychain", args.keychain])
     if args.cert:
         pkgcmd.extend(["--cert", args.cert])
-
     result = cmdexec(pkgcmd)
 
     logger(result["stdout"], 1)
     if result["return_code"] != 0:
-        print "Error Code: %d " % result["return_code"]
-        print result["stderr"]
+        print("Error Code: %d " % result["return_code"])
+        print(result["stderr"])
     else:
-        print pkg_path
+        print(pkg_path)
 
     cleanup_and_exit(0)
+
